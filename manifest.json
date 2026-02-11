@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "ComicFuz Page Saver",
+  "version": "1.0",
+  "description": "Salva páginas do Comic Fuz com numeração automática.",
+  "permissions": [
+    "downloads",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://comic-fuz.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://comic-fuz.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "styles.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

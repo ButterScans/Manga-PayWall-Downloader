@@ -1,0 +1,81 @@
+/* styles.css */
+#comicfuz-save-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+
+  background: #1f1f1f;
+  color: #fff;
+
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 999px;
+
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+#comicfuz-save-btn:hover {
+  background: #2a2a2a;
+}
+
+#comicfuz-save-btn:active {
+  transform: scale(0.96);
+}
+
+#comicfuz-save-btn .cfz-icon {
+  font-size: 14px;
+}
+
+.comicfuz-modal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 2147483647;
+}
+
+.comicfuz-modal-card {
+  background: #fff;
+  padding: 16px;
+  border-radius: 8px;
+  min-width: 300px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  font-family: Arial, sans-serif;
+}
+
+.comicfuz-modal-card h3 {
+  margin: 0 0 8px 0;
+  font-size: 16px;
+}
+
+.comicfuz-format-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.comicfuz-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.comicfuz-actions button {
+  padding: 6px 10px;
+  cursor: pointer;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: #f7f7f7;
+}
+
+.comicfuz-status {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #333;
+}
