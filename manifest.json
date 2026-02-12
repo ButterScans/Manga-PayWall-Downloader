@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "ComicFuz Page Saver",
-  "version": "1.0",
-  "description": "Salva páginas do Comic Fuz com numeração automática.",
+  "name": "PayWall Downloader",
+  "version": "5.2",
+  "description": "Salva imagens de diversos sites com sistema PayWall/Free.",
   "permissions": [
     "downloads",
     "storage",
@@ -12,7 +12,8 @@
     "https://comic-fuz.com/*",
     "https://cycomi.com/*",
     "https://takecomic.jp/*",
-    "https://manga-mee.jp/*"
+    "https://manga-mee.jp/*",
+    "https://championcross.jp/*"
   ],
   "content_scripts": [
     {
@@ -20,7 +21,8 @@
         "https://comic-fuz.com/*",
         "https://cycomi.com/*",
         "https://takecomic.jp/*",
-        "https://manga-mee.jp/*"
+        "https://manga-mee.jp/*",
+        "https://championcross.jp/*"
       ],
       "js": [
         "content.js"

@@ -75,7 +75,7 @@ function initComicFuz() { //https://comic-fuz.com/
     };
 
     document.getElementById('cfz-download-btn').onclick = async () => {
-      setStatus('Preparando imagens...');
+      setStatus('Preparando as imagens...');
 
       try {
         const format = document.querySelector('input[name="cfz-format"]:checked').value;
@@ -106,7 +106,7 @@ function initComicFuz() { //https://comic-fuz.com/
 
         localStorage.setItem(COUNTER_KEY, JSON.stringify(counters));
 
-        setStatus(`Download iniciado... (${dataUrls.length} página${dataUrls.length > 1 ? 's' : ''})`);
+        setStatus(`Baixando as imagens... (${dataUrls.length} página${dataUrls.length > 1 ? 's' : ''})`);
 
         setTimeout(() => {
           modal.remove();
@@ -127,7 +127,7 @@ function initComicFuz() { //https://comic-fuz.com/
     const images = Array.from(document.querySelectorAll('img.G54Y0W_page'));
 
     if (!images.length) {
-      throw new Error('Nenhuma imagem encontrada.');
+      throw new Error('Nenhuma imagem foi encontrada.');
     }
 
     const visibleImages = images.filter(img => {
@@ -219,25 +219,33 @@ function initCycomi() { //https://cycomi.com/
   }
 
   function createButton(container) {
+
     if (!container) return;
-    if (container.querySelector(`#${BUTTON_ID}`)) return;
+    if (document.getElementById(BUTTON_ID)) return;
+
+    const children = Array.from(container.children);
+    if (children.length < 2) return;
+
+    const btnWrapper = document.createElement('div');
+    btnWrapper.style.display = 'flex';
+    btnWrapper.style.alignItems = 'center';
+    btnWrapper.style.justifyContent = 'center';
+    btnWrapper.style.padding = '0 12px';
 
     const btn = document.createElement('button');
     btn.id = BUTTON_ID;
     btn.type = 'button';
     btn.className = 'comicfuz-save-button';
-    btn.innerHTML = `
-      <span>📷</span>
-      <span>Salvar páginas</span>
-    `;
+    btn.textContent = '📷 Salvar páginas';
 
-    btn.style.margin = "0 auto";
+    btn.onclick = openModal;
 
-    btn.addEventListener('click', openModal);
+    btnWrapper.appendChild(btn);
 
-    container.style.display = "flex";
-    container.style.alignItems = "center";
-    container.appendChild(btn);
+    container.insertBefore(btnWrapper, children[1]);
+
+    container.style.display = 'flex';
+    container.style.alignItems = 'center';
   }
 
   function openModal() {
@@ -276,7 +284,7 @@ function initCycomi() { //https://cycomi.com/
     };
 
     document.getElementById('cfz-download-btn').onclick = async () => {
-      setStatus('Preparando imagens...');
+      setStatus('Preparando as imagens...');
 
       try {
         const format = document.querySelector('input[name="cfz-format"]:checked').value;
@@ -306,7 +314,7 @@ function initCycomi() { //https://cycomi.com/
 
         localStorage.setItem(COUNTER_KEY, JSON.stringify(counters));
 
-        setStatus(`Download iniciado... (${dataUrls.length})`);
+        setStatus(`Baixando as imagens... (${dataUrls.length})`);
 
         setTimeout(() => {
           modal.remove();
@@ -472,7 +480,7 @@ function initTakeComic() { //https://takecomic.jp/
     };
 
     document.getElementById('cfz-download-btn').onclick = async () => {
-      setStatus('Preparando imagens...');
+      setStatus('Preparando as imagens...');
 
       try {
         const format = document.querySelector('input[name="cfz-format"]:checked').value;
@@ -503,7 +511,7 @@ function initTakeComic() { //https://takecomic.jp/
 
         localStorage.setItem(COUNTER_KEY, JSON.stringify(counters));
 
-        setStatus(`Download iniciado... (${dataUrls.length} página${dataUrls.length > 1 ? 's' : ''})`);
+        setStatus(`Baixando as imagens... (${dataUrls.length} página${dataUrls.length > 1 ? 's' : ''})`);
 
         setTimeout(() => {
           modal.remove();
@@ -692,7 +700,7 @@ function initMangaMee() { //https://manga-mee.jp/
     };
 
     document.getElementById('cfz-download-btn').onclick = async () => {
-      setStatus('Preparando imagens...');
+      setStatus('Preparando as imagens...');
 
       try {
         const format = document.querySelector('input[name="cfz-format"]:checked').value;
@@ -712,8 +720,8 @@ function initMangaMee() { //https://manga-mee.jp/
           format === 'image/png'
             ? 'png'
             : format === 'image/jpeg'
-            ? 'jpg'
-            : 'webp';
+              ? 'jpg'
+              : 'webp';
 
         for (const dataUrl of dataUrls) {
           const pageNumber = String(counters[chapterKey]).padStart(2, '0');
@@ -723,7 +731,7 @@ function initMangaMee() { //https://manga-mee.jp/
 
         localStorage.setItem(COUNTER_KEY, JSON.stringify(counters));
 
-        setStatus(`Download iniciado... (${dataUrls.length})`);
+        setStatus(`Baixando as imagens... (${dataUrls.length})`);
 
         setTimeout(() => {
           modal.remove();
@@ -810,6 +818,219 @@ function initMangaMee() { //https://manga-mee.jp/
   function ensureButton() {
     const titleEl = findChapterTitleElement();
     if (titleEl) createButton(titleEl);
+  }
+
+  ensureButton();
+
+  const mo = new MutationObserver(ensureButton);
+  mo.observe(document.body, { childList: true, subtree: true });
+}
+
+if (hostname.includes("championcross.jp")) { //https://championcross.jp/
+  initChampionCross();
+}
+
+function initChampionCross() { //https://championcross.jp/
+
+  const COUNTER_KEY = 'comicfuz_page_counter';
+  const BUTTON_ID = 'comicfuz-save-btn';
+  const MODAL_ID = 'comicfuz-save-modal';
+
+  function createButton() {
+
+    const titleSection = document.querySelector('.article-title-section');
+    const title = document.querySelector('.article-title');
+
+    if (!titleSection || !title) return;
+    if (document.getElementById(BUTTON_ID)) return;
+
+    titleSection.style.display = 'flex';
+    titleSection.style.alignItems = 'center';
+    titleSection.style.justifyContent = 'space-between';
+
+    const btn = document.createElement('button');
+    btn.id = BUTTON_ID;
+    btn.type = 'button';
+    btn.className = 'comicfuz-save-button';
+
+    btn.innerHTML = `
+    <span>📷</span>
+    <span>Salvar páginas</span>
+  `;
+
+    btn.addEventListener('click', openModal);
+
+    titleSection.appendChild(btn);
+  }
+
+  function openModal() {
+
+    if (document.getElementById(MODAL_ID)) return;
+
+    const modal = document.createElement('div');
+    modal.id = MODAL_ID;
+    modal.className = 'comicfuz-modal';
+
+    modal.innerHTML = `
+    <div class="comicfuz-modal-card">
+      <h3>Salvar página em formato:</h3>
+
+      <div class="comicfuz-format-row">
+        <label><input type="radio" name="cfz-format" value="image/webp"> webp</label>
+        <label><input type="radio" name="cfz-format" value="image/png" checked> png</label>
+        <label><input type="radio" name="cfz-format" value="image/jpeg"> jpg</label>
+      </div>
+
+      <div class="comicfuz-actions">
+        <button id="cfz-reset-btn" style="margin-right:auto;">Resetar</button>
+        <button id="cfz-download-btn">Baixar</button>
+        <button id="cfz-cancel-btn">Cancelar</button>
+      </div>
+
+      <div id="cfz-status" class="comicfuz-status"></div>
+    </div>
+  `;
+
+    document.body.appendChild(modal);
+
+    document.getElementById('cfz-cancel-btn').onclick = () => modal.remove();
+
+    document.getElementById('cfz-reset-btn').onclick = () => {
+      localStorage.removeItem(COUNTER_KEY);
+      setStatus('Contador resetado.');
+    };
+
+    document.getElementById('cfz-download-btn').onclick = async () => {
+
+      setStatus('Preparando as imagens...');
+
+      try {
+
+        const format = document.querySelector('input[name="cfz-format"]:checked').value;
+
+        const chapterTitle = document.querySelector('.article-title');
+        const chapterKey = chapterTitle
+          ? chapterTitle.innerText.trim()
+          : 'default';
+
+        let counters = JSON.parse(localStorage.getItem(COUNTER_KEY) || '{}');
+
+        if (!counters[chapterKey]) {
+          counters[chapterKey] = 1;
+        }
+
+        const dataUrls = await captureCurrentPages(format);
+
+        const ext =
+          format === 'image/png'
+            ? 'png'
+            : format === 'image/jpeg'
+              ? 'jpg'
+              : 'webp';
+
+        for (const dataUrl of dataUrls) {
+          const pageNumber = String(counters[chapterKey]).padStart(2, '0');
+          downloadDirect(dataUrl, `${pageNumber}.${ext}`);
+          counters[chapterKey]++;
+        }
+
+        localStorage.setItem(COUNTER_KEY, JSON.stringify(counters));
+
+        setStatus(`Baixando as imagens... (${dataUrls.length} página${dataUrls.length > 1 ? 's' : ''})`);
+
+        setTimeout(() => {
+          modal.remove();
+        }, 2500);
+
+      } catch (err) {
+        setStatus('Erro: ' + (err?.message || err));
+      }
+    };
+  }
+
+  function setStatus(msg) {
+    const el = document.getElementById('cfz-status');
+    if (el) el.innerText = msg;
+  }
+
+  async function captureCurrentPages(mimeType) {
+
+    const pages = Array.from(
+      document.querySelectorAll('.-cv-page.mode-loaded.mode-rendered')
+    );
+
+    if (!pages.length) {
+      throw new Error('Nenhuma página foi carregada.');
+    }
+
+    const screenCenter = window.innerWidth / 2;
+    const candidates = [];
+
+    for (const page of pages) {
+
+      const canvas = page.querySelector('canvas');
+      if (!canvas) continue;
+
+      const rect = page.getBoundingClientRect();
+
+      const isVisible =
+        rect.right > 0 && rect.left < window.innerWidth;
+
+      if (!isVisible) continue;
+
+      const distanceFromCenter = Math.abs(
+        (rect.left + rect.right) / 2 - screenCenter
+      );
+
+      candidates.push({
+        canvas,
+        rect,
+        distanceFromCenter
+      });
+    }
+
+    if (!candidates.length) {
+      throw new Error('Nenhuma página está visível.');
+    }
+
+    candidates.sort((a, b) => a.distanceFromCenter - b.distanceFromCenter);
+    const activePages = candidates.slice(0, 2);
+
+    activePages.sort((a, b) => b.rect.left - a.rect.left);
+
+    const results = [];
+
+    for (const item of activePages) {
+
+      const exportCanvas = document.createElement('canvas');
+      exportCanvas.width = item.canvas.width;
+      exportCanvas.height = item.canvas.height;
+
+      const ctx = exportCanvas.getContext('2d');
+      ctx.drawImage(item.canvas, 0, 0);
+
+      const dataUrl =
+        mimeType === 'image/jpeg' || mimeType === 'image/webp'
+          ? exportCanvas.toDataURL(mimeType, 0.92)
+          : exportCanvas.toDataURL(mimeType);
+
+      results.push(dataUrl);
+    }
+
+    return results;
+  }
+
+  function downloadDirect(dataUrl, filename) {
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  function ensureButton() {
+    createButton();
   }
 
   ensureButton();
