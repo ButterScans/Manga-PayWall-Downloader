@@ -1038,3 +1038,267 @@ function initChampionCross() { //https://championcross.jp/
   const mo = new MutationObserver(ensureButton);
   mo.observe(document.body, { childList: true, subtree: true });
 }
+
+if (hostname.includes("firecross.jp")) { //https://firecross.jp/
+  initFireCross();
+}
+
+function initFireCross() { //https://firecross.jp/
+
+  const COUNTER_KEY = 'comicfuz_page_counter';
+  const BUTTON_ID = 'comicfuz-save-btn';
+  const MODAL_ID = 'comicfuz-save-modal';
+
+  function findChapterTitleElement() {
+    return document.querySelector('title');
+  }
+
+  function createButton() {
+
+    if (document.getElementById(BUTTON_ID)) return;
+
+    const btn = document.createElement('button');
+    btn.id = BUTTON_ID;
+    btn.type = 'button';
+    btn.className = 'comicfuz-save-button';
+    btn.innerHTML = `
+      <span>📷</span>
+      <span>Salvar páginas</span>
+    `;
+
+    btn.style.position = 'fixed';
+    btn.style.top = '20px';
+    btn.style.right = '20px';
+    btn.style.zIndex = '999999';
+
+    btn.addEventListener('click', openModal);
+    document.body.appendChild(btn);
+  }
+
+  function openModal() {
+
+    if (document.getElementById(MODAL_ID)) return;
+
+    const modal = document.createElement('div');
+    modal.id = MODAL_ID;
+    modal.className = 'comicfuz-modal';
+    modal.innerHTML = `
+      <div class="comicfuz-modal-card">
+        <h3>Salvar página em formato:</h3>
+
+        <div class="comicfuz-format-row">
+          <label><input type="radio" name="cfz-format" value="image/webp"> webp</label>
+          <label><input type="radio" name="cfz-format" value="image/png" checked> png</label>
+          <label><input type="radio" name="cfz-format" value="image/jpeg"> jpg</label>
+        </div>
+
+        <div class="comicfuz-actions" style="display:flex; align-items:center; gap:10px;">
+          <button id="cfz-reset-btn" style="margin-right:auto;">Resetar</button>
+          <button id="cfz-download-btn">Baixar</button>
+          <button id="cfz-cancel-btn">Cancelar</button>
+        </div>
+
+        <div id="cfz-status" class="comicfuz-status"></div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    document.getElementById('cfz-cancel-btn').onclick = () => modal.remove();
+
+    document.getElementById('cfz-reset-btn').onclick = () => {
+      localStorage.removeItem(COUNTER_KEY);
+      setStatus('Contador resetado.');
+    };
+
+    document.getElementById('cfz-download-btn').onclick = async () => {
+
+      setStatus('Preparando as imagens...');
+
+      try {
+
+        const format = document.querySelector('input[name="cfz-format"]:checked').value;
+        const chapterEl = findChapterTitleElement();
+        const chapterKey = chapterEl ? chapterEl.innerText.trim() : location.pathname;
+
+        let counters = JSON.parse(localStorage.getItem(COUNTER_KEY) || '{}');
+
+        if (!counters[chapterKey]) {
+          counters = {};
+          counters[chapterKey] = 1;
+        }
+
+        const dataUrls = await captureCurrentPages(format);
+
+        const ext =
+          format === 'image/png'
+            ? 'png'
+            : format === 'image/jpeg'
+              ? 'jpg'
+              : 'webp';
+
+        for (const dataUrl of dataUrls) {
+
+          const pageNumber = String(counters[chapterKey]).padStart(2, '0');
+          downloadDirect(dataUrl, `${pageNumber}.${ext}`);
+          counters[chapterKey]++;
+        }
+
+        localStorage.setItem(COUNTER_KEY, JSON.stringify(counters));
+
+        setStatus(`Baixando as imagens... (${dataUrls.length} Páginas)`);
+        setTimeout(() => modal.remove(), 2500);
+
+      } catch (err) {
+        setStatus('Erro: ' + (err?.message || err));
+      }
+    };
+  }
+
+  function setStatus(msg) {
+    const el = document.getElementById('cfz-status');
+    if (el) el.innerText = msg;
+  }
+
+  function isBlankPage(canvas) {
+
+    const ctx = canvas.getContext('2d');
+    const { width, height } = canvas;
+    const data = ctx.getImageData(0, 0, width, height).data;
+
+    let nonWhite = 0;
+    const total = width * height;
+
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const a = data[i + 3];
+
+      if (a === 0) continue;
+
+      if (!(r > 245 && g > 245 && b > 245)) {
+        nonWhite++;
+        if (nonWhite > total * 0.01) return false;
+      }
+    }
+
+    return true;
+  }
+
+  function cropRealContent(canvas) {
+
+    const ctx = canvas.getContext('2d');
+    const { width, height } = canvas;
+    const imgData = ctx.getImageData(0, 0, width, height);
+    const data = imgData.data;
+
+    let top = height;
+    let bottom = 0;
+    let left = width;
+    let right = 0;
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+
+        const i = (y * width + x) * 4;
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const a = data[i + 3];
+
+        if (a === 0) continue;
+        if (r === 0 && g === 0 && b === 0) continue;
+
+        top = Math.min(top, y);
+        bottom = Math.max(bottom, y);
+        left = Math.min(left, x);
+        right = Math.max(right, x);
+      }
+    }
+
+    if (right <= left || bottom <= top) return canvas;
+
+    const newCanvas = document.createElement('canvas');
+    newCanvas.width = right - left + 1;
+    newCanvas.height = bottom - top + 1;
+
+    newCanvas.getContext('2d').drawImage(
+      canvas,
+      left,
+      top,
+      newCanvas.width,
+      newCanvas.height,
+      0,
+      0,
+      newCanvas.width,
+      newCanvas.height
+    );
+
+    return newCanvas;
+  }
+
+  async function captureCurrentPages(mimeType) {
+
+    const canvas = document.querySelector('#screen_layer canvas');
+    if (!canvas) throw new Error('Os/As Canvas(Imagens) não foram encontrado(s).');
+
+    const results = [];
+    const width = canvas.width;
+    const height = canvas.height;
+
+    const isDouble = width > height * 1.3;
+    const pages = isDouble
+      ? [{ x: width / 2 }, { x: 0 }]
+      : [{ x: 0 }];
+
+    for (const p of pages) {
+
+      const exportCanvas = document.createElement('canvas');
+      exportCanvas.width = isDouble ? width / 2 : width;
+      exportCanvas.height = height;
+
+      exportCanvas.getContext('2d').drawImage(
+        canvas,
+        p.x,
+        0,
+        exportCanvas.width,
+        height,
+        0,
+        0,
+        exportCanvas.width,
+        height
+      );
+
+      if (isBlankPage(exportCanvas)) continue;
+
+      const cropped = cropRealContent(exportCanvas);
+
+      const dataUrl =
+        mimeType === 'image/jpeg' || mimeType === 'image/webp'
+          ? cropped.toDataURL(mimeType, 0.92)
+          : cropped.toDataURL(mimeType);
+
+      results.push(dataUrl);
+    }
+
+    return results;
+  }
+
+  function downloadDirect(dataUrl, filename) {
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  const observer = new MutationObserver(() => {
+    if (document.querySelector('#screen_layer canvas')) {
+      createButton();
+    }
+  });
+
+  observer.observe(document.body, { childList: true, subtree: true });
+}

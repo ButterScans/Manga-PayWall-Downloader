@@ -13,7 +13,8 @@
     "https://cycomi.com/*",
     "https://takecomic.jp/*",
     "https://manga-mee.jp/*",
-    "https://championcross.jp/*"
+    "https://championcross.jp/*",
+    "https://firecross.jp/*"
   ],
   "content_scripts": [
     {
@@ -22,7 +23,8 @@
         "https://cycomi.com/*",
         "https://takecomic.jp/*",
         "https://manga-mee.jp/*",
-        "https://championcross.jp/*"
+        "https://championcross.jp/*",
+        "https://firecross.jp/*"
       ],
       "js": [
         "content.js"
