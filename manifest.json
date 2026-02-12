@@ -9,12 +9,16 @@
     "scripting"
   ],
   "host_permissions": [
-    "https://comic-fuz.com/*"
+    "https://comic-fuz.com/*",
+    "https://cycomi.com/*",
+    "https://takecomic.jp/*"
   ],
   "content_scripts": [
     {
       "matches": [
-        "https://comic-fuz.com/*"
+        "https://comic-fuz.com/*",
+        "https://cycomi.com/*",
+        "https://takecomic.jp/*"
       ],
       "js": [
         "content.js"
