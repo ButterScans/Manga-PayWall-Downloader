@@ -118,6 +118,44 @@ function initComicFuz() { //https://comic-fuz.com/
     };
   }
 
+  async function capturePageArea() {
+    const page = document.querySelector(".js-page-area"); // pega o elemento da página
+    if (!page) return console.error("Elemento não encontrado");
+
+    const rect = page.getBoundingClientRect(); // pega largura, altura, posição
+
+    chrome.runtime.sendMessage({ type: "CAPTURE" }, (res) => {
+      if (res?.error) return console.error("Erro ao capturar:", res.error);
+
+      // cria imagem do screenshot
+      const img = new Image();
+      img.onload = () => {
+        // cria canvas temporário com tamanho do elemento
+        const canvas = document.createElement("canvas");
+        canvas.width = rect.width;
+        canvas.height = rect.height;
+        const ctx = canvas.getContext("2d");
+
+        // recorta a região do elemento
+        ctx.drawImage(
+          img,
+          rect.left, rect.top, rect.width, rect.height, // origem
+          0, 0, rect.width, rect.height // destino
+        );
+
+        // salva
+        const croppedDataUrl = canvas.toDataURL("image/png");
+        const link = document.createElement("a");
+        link.href = croppedDataUrl;
+        link.download = "page.png";
+        link.click();
+      };
+      img.src = res.dataUrl;
+    });
+  }
+
+  capturePageArea();
+
   function setStatus(msg) {
     const el = document.getElementById('cfz-status');
     if (el) el.innerText = msg;
@@ -1301,4 +1339,235 @@ function initFireCross() { //https://firecross.jp/
   });
 
   observer.observe(document.body, { childList: true, subtree: true });
+}
+
+if (hostname.includes("viewer.bookwalker")) { //https://bookwalker.jp + https://viewer.bookwalker.jp/
+  initBookWalker();
+}
+
+function initBookWalker() { //https://bookwalker.jp + https://viewer.bookwalker.jp/
+
+  const COUNTER_KEY = 'bookwalker_page_counter';
+  const BUTTON_ID = 'comicfuz-save-btn';
+  const MODAL_ID = 'comicfuz-save-modal';
+
+  function createFloatingButton() {
+    if (document.getElementById(BUTTON_ID)) return;
+
+    const btn = document.createElement('button');
+    btn.id = BUTTON_ID;
+    btn.className = 'comicfuz-save-button';
+    btn.innerHTML = `
+      <span>📷</span>
+      <span>Salvar páginas</span>
+    `;
+
+    btn.style.position = 'fixed';
+    btn.style.top = '20px';
+    btn.style.right = '20px';
+    btn.style.zIndex = '999999';
+    btn.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
+
+    btn.addEventListener('click', openModal);
+
+    document.body.appendChild(btn);
+  }
+
+  function openModal() {
+    if (document.getElementById(MODAL_ID)) return;
+
+    const modal = document.createElement('div');
+    modal.id = MODAL_ID;
+    modal.className = 'comicfuz-modal';
+    modal.innerHTML = `
+      <div class="comicfuz-modal-card">
+        <h3>Salvar página em formato:</h3>
+
+        <div class="comicfuz-format-row">
+          <label><input type="radio" name="cfz-format" value="image/png" checked> png</label>
+          <label><input type="radio" name="cfz-format" value="image/jpeg"> jpg</label>
+          <label><input type="radio" name="cfz-format" value="image/webp"> webp</label>
+        </div>
+
+        <div class="comicfuz-actions" style="display:flex; align-items:center; gap:10px;">
+          <button id="cfz-reset-btn" style="margin-right:auto;">Resetar Contador</button>
+          <button id="cfz-download-btn">Baixar</button>
+          <button id="cfz-cancel-btn">Cancelar</button>
+        </div>
+
+        <div id="cfz-status" class="comicfuz-status"></div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    document.getElementById('cfz-cancel-btn').onclick = () => modal.remove();
+
+    document.getElementById('cfz-reset-btn').onclick = () => {
+      localStorage.removeItem(COUNTER_KEY);
+      setStatus('Contador resetado.');
+    };
+
+    document.getElementById('cfz-download-btn').onclick = async () => {
+
+      try {
+        setStatus('Preparando as imagens...');
+
+        const format = document.querySelector('input[name="cfz-format"]:checked').value;
+
+        const chapterKey = document.querySelector('#pagetitle span')?.innerText || 'default';
+
+        let counters = JSON.parse(localStorage.getItem(COUNTER_KEY) || '{}');
+
+        if (!counters[chapterKey]) {
+          counters = {};
+          counters[chapterKey] = 1;
+        }
+
+        const dataUrls = await captureBookWalker(format);
+
+        const ext =
+          format === 'image/png'
+            ? 'png'
+            : format === 'image/jpeg'
+              ? 'jpg'
+              : 'webp';
+
+        for (const dataUrl of dataUrls) {
+          const pageNumber = String(counters[chapterKey]).padStart(2, '0');
+          downloadDirect(dataUrl, `${pageNumber}.${ext}`);
+          counters[chapterKey]++;
+        }
+
+        localStorage.setItem(COUNTER_KEY, JSON.stringify(counters));
+
+        setStatus('Baixando as imagens...');
+
+        setTimeout(() => {
+          modal.remove();
+        }, 2500);
+
+      } catch (err) {
+        setStatus('Erro: ' + (err?.message || err));
+      }
+    };
+  }
+
+  function setStatus(msg) {
+    const el = document.getElementById('cfz-status');
+    if (el) el.innerText = msg;
+  }
+
+  async function captureBookWalker(mimeType) {
+    const REF_CANVAS_W = 2390;
+    const REF_CANVAS_H = 1165;
+    const REF_CROP_X = 375;
+    const REF_CROP_Y = 0;
+    const REF_CROP_W = 820;
+    const REF_CROP_H = 1165;
+
+    function pickCurrentCanvas() {
+      const prefer = document.querySelector('#viewport1.currentScreen canvas, #viewport0.currentScreen canvas');
+      if (prefer) return prefer;
+
+      const canvases = Array.from(document.querySelectorAll('#viewport1 canvas, #viewport0 canvas'));
+      if (!canvases.length && document.querySelector('canvas')) return document.querySelector('canvas');
+      if (!canvases.length) return null;
+
+      const renderer = document.querySelector('#renderer');
+      const center = renderer
+        ? {
+          x: (renderer.getBoundingClientRect().left + renderer.getBoundingClientRect().right) / 2,
+          y: (renderer.getBoundingClientRect().top + renderer.getBoundingClientRect().bottom) / 2
+        }
+        : { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+
+      for (const c of canvases) {
+        const r = c.getBoundingClientRect();
+        if (center.x >= r.left && center.x <= r.right && center.y >= r.top && center.y <= r.bottom) return c;
+      }
+
+      let best = null, bestScore = -Infinity;
+      for (const c of canvases) {
+        const r = c.getBoundingClientRect();
+        const visW = Math.max(0, Math.min(r.right, window.innerWidth) - Math.max(r.left, 0));
+        const visH = Math.max(0, Math.min(r.bottom, window.innerHeight) - Math.max(r.top, 0));
+        const visArea = visW * visH;
+        if (visArea <= 0) continue;
+        const cx = r.left + r.width / 2;
+        const cy = r.top + r.height / 2;
+        const dist = Math.hypot(cx - window.innerWidth / 2, cy - window.innerHeight / 2);
+        const score = visArea - dist * 10;
+        if (score > bestScore) { bestScore = score; best = c; }
+      }
+      return best;
+    }
+
+    function canvasCropToDataUrl(srcCanvas, sx, sy, sw, sh, mime) {
+      sx = Math.max(0, Math.min(sx, srcCanvas.width - 1));
+      sy = Math.max(0, Math.min(sy, srcCanvas.height - 1));
+      sw = Math.max(1, Math.min(sw, srcCanvas.width - sx));
+      sh = Math.max(1, Math.min(sh, srcCanvas.height - sy));
+
+      const out = document.createElement('canvas');
+      out.width = sw;
+      out.height = sh;
+      out.getContext('2d').drawImage(srcCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
+
+      return (mime === 'image/jpeg' || mime === 'image/webp')
+        ? out.toDataURL(mime, 0.92)
+        : out.toDataURL('image/png');
+    }
+
+    const canvas = pickCurrentCanvas();
+    if (!canvas) throw new Error('Os/As Canvas(Imagens) não foram encontrado(s).');
+
+    const cw = canvas.width;
+    const ch = canvas.height;
+
+    const scaleX = cw / REF_CANVAS_W;
+    const scaleY = ch / REF_CANVAS_H;
+
+    const cropW = Math.round(REF_CROP_W * scaleX);
+    const cropH = Math.round(REF_CROP_H * scaleY);
+    const baseX = Math.round(REF_CROP_X * scaleX);
+    const baseY = Math.round(REF_CROP_Y * scaleY);
+
+    const isSpread = cw / ch > 1.05;
+
+    const results = [];
+
+    if (!isSpread) {
+      const sx = Math.max(0, Math.min(baseX, cw - cropW));
+      const sy = Math.max(0, Math.min(baseY, ch - cropH));
+      results.push(canvasCropToDataUrl(canvas, sx, sy, cropW, cropH, mimeType));
+      return results;
+    }
+
+    const leftX = Math.max(0, Math.min(baseX, cw - cropW));
+    const rightX = Math.max(0, Math.min(baseX + cropW, cw - cropW));
+
+    const rightDataUrl = canvasCropToDataUrl(canvas, rightX, baseY, cropW, cropH, mimeType);
+    const leftDataUrl = canvasCropToDataUrl(canvas, leftX, baseY, cropW, cropH, mimeType);
+
+    results.push(rightDataUrl, leftDataUrl);
+    return results;
+  }
+
+  function exportCanvas(canvas, mimeType) {
+    return mimeType === 'image/jpeg' || mimeType === 'image/webp'
+      ? canvas.toDataURL(mimeType, 0.92)
+      : canvas.toDataURL(mimeType);
+  }
+
+  function downloadDirect(dataUrl, filename) {
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  createFloatingButton();
 }

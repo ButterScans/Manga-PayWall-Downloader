@@ -1,12 +1,14 @@
 {
   "manifest_version": 3,
   "name": "PayWall Downloader",
-  "version": "5.2",
+  "version": "5.5",
   "description": "Salva imagens de diversos sites com sistema PayWall/Free.",
   "permissions": [
     "downloads",
     "storage",
-    "scripting"
+    "scripting",
+    "activeTab",
+    "tabs"
   ],
   "host_permissions": [
     "https://comic-fuz.com/*",
@@ -14,7 +16,9 @@
     "https://takecomic.jp/*",
     "https://manga-mee.jp/*",
     "https://championcross.jp/*",
-    "https://firecross.jp/*"
+    "https://firecross.jp/*",
+    "https://ynjn.jp/*",
+    "https://viewer.bookwalker.jp/*"
   ],
   "content_scripts": [
     {
@@ -24,7 +28,9 @@
         "https://takecomic.jp/*",
         "https://manga-mee.jp/*",
         "https://championcross.jp/*",
-        "https://firecross.jp/*"
+        "https://firecross.jp/*",
+        "https://ynjn.jp/*",
+        "https://viewer.bookwalker.jp/*"
       ],
       "js": [
         "content.js"
