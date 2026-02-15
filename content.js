@@ -53,11 +53,8 @@ const MPD = (() => {
   function normalizeVer(v) {
     if (!v) return '0.0.0';
     let s = String(v).trim().toLowerCase();
-    // remover prefixos comuns como "v" ou qualquer caractere não numérico inicial
     s = s.replace(/^[^\d]*/, '');
-    // manter apenas dígitos e pontos
     s = s.replace(/[^0-9.]/g, '');
-    // colapsar múltiplos pontos e remover ponto final
     s = s.replace(/\.{2,}/g, '.').replace(/\.$/, '');
     if (!s) return '0.0.0';
     return s;
@@ -128,7 +125,6 @@ const MPD = (() => {
     log('status:', msg);
   }
 
-  // injetar estilos do modal de update (executa apenas uma vez)
   function ensureUpdateModalStylesExists() {
     if (document.getElementById('mpd-update-styles')) return;
     const style = document.createElement('style');
@@ -184,22 +180,19 @@ const MPD = (() => {
 
   function showAvailableModal(releaseData) {
     try {
-      // remove checker modal se presente
       const checker = document.getElementById('mpd-update-checker-modal');
       if (checker) checker.remove();
 
-      // remove modal antigo se existir (garante sempre um modal limpo)
       const old = document.getElementById('mpd-update-available-modal');
       if (old) old.remove();
 
       ensureUpdateModalStylesExists();
 
-      // pega body da release; se não veio, tenta do state salvo
       const state = readState();
       const name = releaseData.name || releaseData.tag_name || 'release';
       const savedBody = state.latestBody || '';
       const bodyRaw = (releaseData && typeof releaseData.body === 'string' && releaseData.body.trim()) ? releaseData.body : savedBody;
-      const bodyPreview = (bodyRaw || '').slice(0, 2000); // mostra até 2000 chars, evita sumir
+      const bodyPreview = (bodyRaw || '').slice(0, 2000); 
 
       const modalWrap = document.createElement('div');
       modalWrap.id = 'mpd-update-available-modal';
@@ -219,14 +212,12 @@ const MPD = (() => {
 
       document.body.appendChild(modalWrap);
 
-      // clique no botão leva para a release no GitHub
       document.getElementById('mpd-update-go-btn').onclick = () => {
         const url = (releaseData && releaseData.html_url) ? releaseData.html_url : 'https://github.com/ButterScans/Manga-PayWall-Downloader/releases';
         log('Redirecionando para releases:', url);
         try { window.open(url, '_blank'); } catch (e) { location.href = url; }
       };
 
-      // caso releaseData inclua body, atualizamos o state (garante persistência)
       if (releaseData && releaseData.body) {
         setStateAfterCheck(releaseData, false);
       }
@@ -256,7 +247,6 @@ const MPD = (() => {
 
       state.etag = (releaseData && releaseData._mpd_etag) ? releaseData._mpd_etag : state.etag || null;
 
-      // armazenar a descrição completa se vier no objeto
       if (releaseData && releaseData.body && typeof releaseData.body === 'string' && releaseData.body.trim()) {
         state.latestBody = releaseData.body;
       }
@@ -286,17 +276,14 @@ const MPD = (() => {
     const state = readState();
     const localVer = getLocalVersion();
 
-    // Se já checamos recentemente, só pulamos o fetch se a versão local for >= última tag conhecida.
     if (!force && state.lastChecked && (now() - state.lastChecked) < DEFAULT_SKIP_SECONDS * 1000) {
       if (state.latestTag && semverCompare(localVer, state.latestTag) >= 0) {
         log('estado indica up-to-date e última checagem recente. pulando fetch e abrindo downloader.');
         setStatusUI('versão local é a mais recente (checada anteriormente). iniciando downloader...');
-        // garante que estado esteja consistente
         setStateAfterCheck({ tag_name: state.latestTag, _mpd_etag: state.etag }, true);
         showNoUpdateThenOpenDownloader();
         return;
       } else {
-        // temos uma checagem recente, mas local < remote; por segurança, continuamos e buscamos o GitHub
         log('última checagem recente, mas versão local menor que remote. realizando fetch para confirmar.');
       }
     }
@@ -306,7 +293,6 @@ const MPD = (() => {
     try {
       const res = await fetchLatestRelease(etag);
 
-      // Caso GitHub retorne 304 Not Modified, usamos a última tag que já temos salvo em state
       if (res.notModified) {
         const remoteTag = state.latestTag || null;
         log('fetch returned 304. remoteTag from state:', remoteTag);
@@ -317,7 +303,6 @@ const MPD = (() => {
           showNoUpdateThenOpenDownloader();
           return;
         } else {
-          // sabemos que há uma tag remota (na state) e a versão local é menor -> abrir checker/update modal
           setStatusUI(`Nova versão disponível: ${remoteTag}`);
           setStateAfterCheck({ tag_name: remoteTag, _mpd_etag: state.etag }, false);
           showAvailableModal({ tag_name: remoteTag, name: remoteTag, body: '' });
