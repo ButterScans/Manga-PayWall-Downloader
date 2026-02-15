@@ -50,11 +50,26 @@ const MPD = (() => {
     return '0.0.0';
   }
 
+  function normalizeVer(v) {
+    if (!v) return '0.0.0';
+    let s = String(v).trim().toLowerCase();
+    // remover prefixos comuns como "v" ou qualquer caractere não numérico inicial
+    s = s.replace(/^[^\d]*/, '');
+    // manter apenas dígitos e pontos
+    s = s.replace(/[^0-9.]/g, '');
+    // colapsar múltiplos pontos e remover ponto final
+    s = s.replace(/\.{2,}/g, '.').replace(/\.$/, '');
+    if (!s) return '0.0.0';
+    return s;
+  }
+
   function semverCompare(a, b) {
-    const pa = String(a).split('.').map(n => parseInt(n) || 0);
-    const pb = String(b).split('.').map(n => parseInt(n) || 0);
-    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-      const na = pa[i] || 0, nb = pb[i] || 0;
+    const pa = normalizeVer(a).split('.').map(n => parseInt(n, 10) || 0);
+    const pb = normalizeVer(b).split('.').map(n => parseInt(n, 10) || 0);
+    const max = Math.max(pa.length, pb.length);
+    for (let i = 0; i < max; i++) {
+      const na = pa[i] || 0;
+      const nb = pb[i] || 0;
       if (na > nb) return 1;
       if (na < nb) return -1;
     }
@@ -113,44 +128,111 @@ const MPD = (() => {
     log('status:', msg);
   }
 
-  function showAvailableModal(releaseData) {
-    const checker = document.getElementById('mpd-update-checker-modal');
-    if (checker) checker.remove();
-    const modal = document.createElement('div');
-    modal.id = 'mpd-update-available-modal';
-    modal.className = 'comicfuz-modal';
-    modal.style.zIndex = 9999999;
-    const name = releaseData.name || releaseData.tag_name || 'release';
-    const bodyPreview = (releaseData.body || '').slice(0, 800);
-    modal.innerHTML = `
-      <div class="comicfuz-modal-card" style="min-width:360px;">
-        <h3>Atualização disponível</h3>
-        <div style="margin-bottom:8px;">Versão: ${name}</div>
-        <div style="max-height:180px; overflow:auto; border:1px solid #eee; padding:8px; white-space:pre-wrap;">${escapeHtml(bodyPreview)}</div>
-        <div id="mpd-update-available-status" class="comicfuz-status" style="margin-top:8px;"></div>
-        <div style="display:flex; gap:8px; margin-top:12px;">
-          <button id="mpd-update-ignore-btn">Ignorar (continuar)</button>
-          <button id="mpd-update-go-btn">Ir para releases</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(modal);
-
-    document.getElementById('mpd-update-ignore-btn').onclick = () => {
-      setStateAfterCheck(releaseData, true);
-      modal.remove();
-      log('Usuário optou por ignorar update / continuar com downloader.');
-      if (typeof MPD._afterCheckOpenDownloader === 'function') {
-        MPD._afterCheckOpenDownloader();
-        MPD._afterCheckOpenDownloader = null;
+  // injetar estilos do modal de update (executa apenas uma vez)
+  function ensureUpdateModalStylesExists() {
+    if (document.getElementById('mpd-update-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'mpd-update-styles';
+    style.textContent = `
+      .mpd-modal, .comicfuz-modal { position: fixed; inset: 0; display:flex; align-items:center; justify-content:center; z-index:9999999; }
+      .mpd-modal-backdrop { position: absolute; inset:0; background: rgba(0,0,0,0.45); backdrop-filter: blur(2px); }
+      .mpd-modal-card, .comicfuz-modal-card {
+        position: relative;
+        z-index: 2;
+        width: 420px;
+        max-width: calc(100% - 32px);
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+        padding: 18px;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
       }
-    };
+      .mpd-modal-card h3 { margin: 0 0 12px 0; font-size:18px; text-align:center; }
+      .mpd-update-desc {
+        max-height: 240px;
+        overflow:auto;
+        padding:10px;
+        border-radius:8px;
+        background:#fafafa;
+        border:1px solid #eee;
+        white-space: pre-wrap;
+      }
+      .mpd-actions { display:flex; justify-content:center; gap:12px; margin-top:14px; }
+      .mpd-btn {
+        appearance:none;
+        border:0;
+        padding:8px 14px;
+        border-radius:10px;
+        font-weight:600;
+        cursor:pointer;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.08);
+      }
+      .mpd-btn-primary {
+        background: linear-gradient(180deg,#2b8fff,#1a6fe0);
+        color:#fff;
+      }
+      .mpd-btn-ghost {
+        background: transparent;
+        color:#333;
+        border:1px solid #ddd;
+      }
+      /* tentativa de reaproveitar estilos do comic-fuz caso existam */
+      .mpd-btn.comicfuz-save-button { padding:8px 12px; }
+    `;
+    document.head.appendChild(style);
+  }
 
-    document.getElementById('mpd-update-go-btn').onclick = () => {
-      const url = (releaseData.html_url) ? releaseData.html_url : 'https://github.com/ButterScans/Manga-PayWall-Downloader/releases';
-      log('Redirecionando para releases:', url);
-      try { window.open(url, '_blank'); } catch (e) { location.href = url; }
-    };
+  function showAvailableModal(releaseData) {
+    try {
+      // remove checker modal se presente
+      const checker = document.getElementById('mpd-update-checker-modal');
+      if (checker) checker.remove();
+
+      // remove modal antigo se existir (garante sempre um modal limpo)
+      const old = document.getElementById('mpd-update-available-modal');
+      if (old) old.remove();
+
+      ensureUpdateModalStylesExists();
+
+      // pega body da release; se não veio, tenta do state salvo
+      const state = readState();
+      const name = releaseData.name || releaseData.tag_name || 'release';
+      const savedBody = state.latestBody || '';
+      const bodyRaw = (releaseData && typeof releaseData.body === 'string' && releaseData.body.trim()) ? releaseData.body : savedBody;
+      const bodyPreview = (bodyRaw || '').slice(0, 2000); // mostra até 2000 chars, evita sumir
+
+      const modalWrap = document.createElement('div');
+      modalWrap.id = 'mpd-update-available-modal';
+      modalWrap.className = 'mpd-modal comicfuz-modal';
+
+      modalWrap.innerHTML = `
+        <div class="mpd-modal-backdrop" onclick="document.getElementById('mpd-update-available-modal')?.remove()"></div>
+        <div class="mpd-modal-card comicfuz-modal-card" role="dialog" aria-labelledby="mpd-update-title">
+          <h3 id="mpd-update-title">🔥 Atualização disponível!</h3>
+          <div style="text-align:center; margin-bottom:10px;">Versão: ${escapeHtml(name)}</div>
+          <div id="mpd-update-desc" class="mpd-update-desc">${escapeHtml(bodyPreview)}</div>
+          <div class="mpd-actions">
+            <button id="mpd-update-go-btn" class="mpd-btn mpd-btn-primary comicfuz-save-button">Baixe aqui</button>
+          </div>
+        </div>
+      `;
+
+      document.body.appendChild(modalWrap);
+
+      // clique no botão leva para a release no GitHub
+      document.getElementById('mpd-update-go-btn').onclick = () => {
+        const url = (releaseData && releaseData.html_url) ? releaseData.html_url : 'https://github.com/ButterScans/Manga-PayWall-Downloader/releases';
+        log('Redirecionando para releases:', url);
+        try { window.open(url, '_blank'); } catch (e) { location.href = url; }
+      };
+
+      // caso releaseData inclua body, atualizamos o state (garante persistência)
+      if (releaseData && releaseData.body) {
+        setStateAfterCheck(releaseData, false);
+      }
+    } catch (e) {
+      logError('Erro showAvailableModal:', e);
+    }
   }
 
   function showNoUpdateThenOpenDownloader() {
@@ -168,9 +250,29 @@ const MPD = (() => {
     try {
       const state = readState();
       state.lastChecked = now();
-      state.latestTag = (releaseData && (releaseData.tag_name || releaseData.name)) ? (releaseData.tag_name || releaseData.name) : state.latestTag || null;
+
+      const newLatestTag = (releaseData && (releaseData.tag_name || releaseData.name)) ? (releaseData.tag_name || releaseData.name) : state.latestTag || null;
+      state.latestTag = newLatestTag;
+
       state.etag = (releaseData && releaseData._mpd_etag) ? releaseData._mpd_etag : state.etag || null;
-      state.isLatest = treatAsUpToDate ? true : (releaseData ? (semverCompare(getLocalVersion(), state.latestTag || '0.0.0') >= 0) : state.isLatest || false);
+
+      // armazenar a descrição completa se vier no objeto
+      if (releaseData && releaseData.body && typeof releaseData.body === 'string' && releaseData.body.trim()) {
+        state.latestBody = releaseData.body;
+      }
+
+      if (treatAsUpToDate) {
+        state.isLatest = true;
+      } else if (newLatestTag) {
+        try {
+          state.isLatest = (semverCompare(getLocalVersion(), newLatestTag || '0.0.0') >= 0);
+        } catch (e) {
+          state.isLatest = false;
+        }
+      } else {
+        state.isLatest = state.isLatest || false;
+      }
+
       writeState(state);
       log('Estado atualizado:', state);
     } catch (e) { logError('Erro setStateAfterCheck:', e); }
@@ -184,23 +286,45 @@ const MPD = (() => {
     const state = readState();
     const localVer = getLocalVersion();
 
-    if (!force && state.isLatest && (state.lastChecked && (now() - state.lastChecked) < DEFAULT_SKIP_SECONDS * 1000)) {
-      log('estado indica up-to-date e última checagem recente. pulando fetch e abrindo downloader.');
-      setStatusUI('versão local é a mais recente (checada anteriormente). iniciando downloader...');
-      showNoUpdateThenOpenDownloader();
-      return;
+    // Se já checamos recentemente, só pulamos o fetch se a versão local for >= última tag conhecida.
+    if (!force && state.lastChecked && (now() - state.lastChecked) < DEFAULT_SKIP_SECONDS * 1000) {
+      if (state.latestTag && semverCompare(localVer, state.latestTag) >= 0) {
+        log('estado indica up-to-date e última checagem recente. pulando fetch e abrindo downloader.');
+        setStatusUI('versão local é a mais recente (checada anteriormente). iniciando downloader...');
+        // garante que estado esteja consistente
+        setStateAfterCheck({ tag_name: state.latestTag, _mpd_etag: state.etag }, true);
+        showNoUpdateThenOpenDownloader();
+        return;
+      } else {
+        // temos uma checagem recente, mas local < remote; por segurança, continuamos e buscamos o GitHub
+        log('última checagem recente, mas versão local menor que remote. realizando fetch para confirmar.');
+      }
     }
 
     const etag = state.etag || null;
 
     try {
       const res = await fetchLatestRelease(etag);
+
+      // Caso GitHub retorne 304 Not Modified, usamos a última tag que já temos salvo em state
       if (res.notModified) {
-        setStatusUI('nenhuma nova release encontrada (304). abrindo downloader...');
-        setStateAfterCheck({ tag_name: state.latestTag, _mpd_etag: state.etag }, true);
-        showNoUpdateThenOpenDownloader();
-        return;
+        const remoteTag = state.latestTag || null;
+        log('fetch returned 304. remoteTag from state:', remoteTag);
+
+        if (remoteTag && semverCompare(localVer, remoteTag) >= 0) {
+          setStatusUI('nenhuma nova release encontrada (304). abrindo downloader...');
+          setStateAfterCheck({ tag_name: remoteTag, _mpd_etag: state.etag }, true);
+          showNoUpdateThenOpenDownloader();
+          return;
+        } else {
+          // sabemos que há uma tag remota (na state) e a versão local é menor -> abrir checker/update modal
+          setStatusUI(`Nova versão disponível: ${remoteTag}`);
+          setStateAfterCheck({ tag_name: remoteTag, _mpd_etag: state.etag }, false);
+          showAvailableModal({ tag_name: remoteTag, name: remoteTag, body: '' });
+          return;
+        }
       }
+
       const release = res.data;
       if (res.etag) release._mpd_etag = res.etag;
 
@@ -214,7 +338,8 @@ const MPD = (() => {
       }
 
       const cmp = semverCompare(localVer, remoteTag);
-      log('Comparando versões - local:', localVer, 'remote:', remoteTag, 'cmp:', cmp);
+      log('Comparando versões - local:', localVer, '(', normalizeVer(localVer), ')',
+    'remote:', remoteTag, '(', normalizeVer(remoteTag), ')', 'cmp:', cmp);
 
       if (cmp >= 0) {
         setStatusUI(`Você está usando a versão mais recente (${localVer}). Iniciando o GUI de download...`);
