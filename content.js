@@ -1,3 +1,349 @@
+const MPD = (() => {
+  const RELEASES_LATEST_URL = 'https://api.github.com/repos/ButterScans/Manga-PayWall-Downloader/releases/latest';
+  const STATE_KEY = 'mpd_state_v1';
+  const LOCAL_VERSION_KEY = 'mpd_local_version_override';
+  const DEFAULT_SKIP_SECONDS = 24 * 60 * 60;
+
+  function log(...args) { console.log('[MPD]', ...args); }
+  function logError(...args) { console.error('[MPD][ERROR]', ...args); }
+  function now() { return Date.now(); }
+
+  function readState() {
+    try { return JSON.parse(localStorage.getItem(STATE_KEY) || '{}'); }
+    catch (e) { logError('Falha ao ler estado:', e); return {}; }
+  }
+
+  function writeState(s) {
+    try { localStorage.setItem(STATE_KEY, JSON.stringify(s)); }
+    catch (e) { logError('Falha ao gravar estado:', e); }
+  }
+
+  function setLocalVersion(v) {
+    try { localStorage.setItem(LOCAL_VERSION_KEY, String(v)); log('local version override set to', v); }
+    catch (e) { logError('Erro setLocalVersion:', e); }
+  }
+
+  function getLocalVersion() {
+    try {
+      const override = localStorage.getItem(LOCAL_VERSION_KEY);
+      if (override) {
+        log('local version from override (priority):', override);
+        return override;
+      }
+    } catch (e) {
+      logError('Erro lendo override de versão:', e);
+    }
+
+    try {
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getManifest) {
+        const m = chrome.runtime.getManifest();
+        if (m && m.version) {
+          log('local version from manifest (fallback):', m.version);
+          return m.version;
+        }
+      }
+    } catch (e) {
+      log('manifest read failed or not available:', e);
+    }
+
+    log('local version unknown; usando "0.0.0" como fallback');
+    return '0.0.0';
+  }
+
+  function semverCompare(a, b) {
+    const pa = String(a).split('.').map(n => parseInt(n) || 0);
+    const pb = String(b).split('.').map(n => parseInt(n) || 0);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const na = pa[i] || 0, nb = pb[i] || 0;
+      if (na > nb) return 1;
+      if (na < nb) return -1;
+    }
+    return 0;
+  }
+
+  async function fetchLatestRelease(etag) {
+    log('fetchLatestRelease() — iniciando request', RELEASES_LATEST_URL, etag ? '(usando etag)' : '');
+    try {
+      const headers = { 'Accept': 'application/vnd.github.v3+json' };
+      if (etag) headers['If-None-Match'] = etag;
+      const res = await fetch(RELEASES_LATEST_URL, { headers, cache: 'no-store' });
+      if (res.status === 304) { log('GitHub returned 304 Not Modified'); return { notModified: true, status: 304 }; }
+      if (!res.ok) {
+        const text = await res.text().catch(()=>null);
+        throw new Error(`HTTP ${res.status} ${res.statusText} ${text ? '| '+text.slice(0,200) : ''}`);
+      }
+      const et = res.headers.get('etag') || null;
+      const json = await res.json();
+      log('fetchLatestRelease() — received', json.tag_name || json.name || '(sem tag)', 'etag:', et);
+      return { data: json, etag: et };
+    } catch (err) { logError('fetchLatestRelease error:', err); throw err; }
+  }
+
+  function createCheckerModal() {
+    let existing = document.getElementById('mpd-update-checker-modal');
+    if (existing) return existing;
+    const modal = document.createElement('div');
+    modal.id = 'mpd-update-checker-modal';
+    modal.className = 'comicfuz-modal';
+    modal.style.zIndex = 9999999;
+    modal.innerHTML = `
+      <div class="comicfuz-modal-card" style="min-width:320px;">
+        <h3>Verificando atualizações</h3>
+        <div id="mpd-update-status" class="comicfuz-status">verificando atualizações...</div>
+        <div style="display:flex; gap:8px; margin-top:12px;">
+          <button id="mpd-update-close-btn">Fechar</button>
+          <button id="mpd-update-force-btn">Forçar checagem</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    document.getElementById('mpd-update-close-btn').onclick = () => modal.remove();
+    document.getElementById('mpd-update-force-btn').onclick = () => {
+      startUpdateFlow(true).catch(err => {
+        setStatusUI('Erro ao forçar checagem: ' + (err?.message || err));
+        logError('Erro forçando checagem:', err);
+      });
+    };
+    return modal;
+  }
+
+  function setStatusUI(msg) {
+    const el = document.getElementById('mpd-update-status');
+    if (el) el.innerText = msg;
+    log('status:', msg);
+  }
+
+  function showAvailableModal(releaseData) {
+    const checker = document.getElementById('mpd-update-checker-modal');
+    if (checker) checker.remove();
+    const modal = document.createElement('div');
+    modal.id = 'mpd-update-available-modal';
+    modal.className = 'comicfuz-modal';
+    modal.style.zIndex = 9999999;
+    const name = releaseData.name || releaseData.tag_name || 'release';
+    const bodyPreview = (releaseData.body || '').slice(0, 800);
+    modal.innerHTML = `
+      <div class="comicfuz-modal-card" style="min-width:360px;">
+        <h3>Atualização disponível</h3>
+        <div style="margin-bottom:8px;">Versão: ${name}</div>
+        <div style="max-height:180px; overflow:auto; border:1px solid #eee; padding:8px; white-space:pre-wrap;">${escapeHtml(bodyPreview)}</div>
+        <div id="mpd-update-available-status" class="comicfuz-status" style="margin-top:8px;"></div>
+        <div style="display:flex; gap:8px; margin-top:12px;">
+          <button id="mpd-update-ignore-btn">Ignorar (continuar)</button>
+          <button id="mpd-update-go-btn">Ir para releases</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    document.getElementById('mpd-update-ignore-btn').onclick = () => {
+      setStateAfterCheck(releaseData, true);
+      modal.remove();
+      log('Usuário optou por ignorar update / continuar com downloader.');
+      if (typeof MPD._afterCheckOpenDownloader === 'function') {
+        MPD._afterCheckOpenDownloader();
+        MPD._afterCheckOpenDownloader = null;
+      }
+    };
+
+    document.getElementById('mpd-update-go-btn').onclick = () => {
+      const url = (releaseData.html_url) ? releaseData.html_url : 'https://github.com/ButterScans/Manga-PayWall-Downloader/releases';
+      log('Redirecionando para releases:', url);
+      try { window.open(url, '_blank'); } catch (e) { location.href = url; }
+    };
+  }
+
+  function showNoUpdateThenOpenDownloader() {
+    const checker = document.getElementById('mpd-update-checker-modal');
+    if (checker) checker.remove();
+    if (typeof MPD._afterCheckOpenDownloader === 'function') {
+      MPD._afterCheckOpenDownloader();
+      MPD._afterCheckOpenDownloader = null;
+    } else { log('Nenhum callback de downloader encontrado — nada para abrir'); }
+  }
+
+  function escapeHtml(s) { return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]); }
+
+  function setStateAfterCheck(releaseData, treatAsUpToDate=false) {
+    try {
+      const state = readState();
+      state.lastChecked = now();
+      state.latestTag = (releaseData && (releaseData.tag_name || releaseData.name)) ? (releaseData.tag_name || releaseData.name) : state.latestTag || null;
+      state.etag = (releaseData && releaseData._mpd_etag) ? releaseData._mpd_etag : state.etag || null;
+      state.isLatest = treatAsUpToDate ? true : (releaseData ? (semverCompare(getLocalVersion(), state.latestTag || '0.0.0') >= 0) : state.isLatest || false);
+      writeState(state);
+      log('Estado atualizado:', state);
+    } catch (e) { logError('Erro setStateAfterCheck:', e); }
+  }
+
+  async function startUpdateFlow(force=false) {
+    log('startUpdateFlow called. force:', force);
+    const modal = createCheckerModal();
+    setStatusUI('verificando atualizações');
+
+    const state = readState();
+    const localVer = getLocalVersion();
+
+    if (!force && state.isLatest && (state.lastChecked && (now() - state.lastChecked) < DEFAULT_SKIP_SECONDS * 1000)) {
+      log('estado indica up-to-date e última checagem recente. pulando fetch e abrindo downloader.');
+      setStatusUI('versão local é a mais recente (checada anteriormente). iniciando downloader...');
+      showNoUpdateThenOpenDownloader();
+      return;
+    }
+
+    const etag = state.etag || null;
+
+    try {
+      const res = await fetchLatestRelease(etag);
+      if (res.notModified) {
+        setStatusUI('nenhuma nova release encontrada (304). abrindo downloader...');
+        setStateAfterCheck({ tag_name: state.latestTag, _mpd_etag: state.etag }, true);
+        showNoUpdateThenOpenDownloader();
+        return;
+      }
+      const release = res.data;
+      if (res.etag) release._mpd_etag = res.etag;
+
+      const remoteTag = release.tag_name || release.name || null;
+      if (!remoteTag) {
+        setStatusUI('erro: release sem tag_name. abrindo downloader por segurança.');
+        logError('release sem tag_name recebido:', release);
+        setStateAfterCheck(release, true);
+        showNoUpdateThenOpenDownloader();
+        return;
+      }
+
+      const cmp = semverCompare(localVer, remoteTag);
+      log('Comparando versões - local:', localVer, 'remote:', remoteTag, 'cmp:', cmp);
+
+      if (cmp >= 0) {
+        setStatusUI(`Você está usando a versão mais recente (${localVer}). Iniciando o GUI de download...`);
+        setStateAfterCheck(release, true);
+        showNoUpdateThenOpenDownloader();
+        return;
+      } else {
+        setStatusUI(`Nova versão disponível: ${remoteTag}`);
+        setStateAfterCheck(release, false);
+        showAvailableModal(release);
+        return;
+      }
+    } catch (err) {
+      setStatusUI('Erro ao verificar se há atualizações: ' + (err?.message || err));
+      logError('Erro no fluxo de verificação:', err);
+      setTimeout(() => {
+        setStatusUI('abrindo o GUI de download (fallback)...');
+        showNoUpdateThenOpenDownloader();
+      }, 1200);
+    }
+  }
+
+  function resetState() {
+    localStorage.removeItem(STATE_KEY);
+    localStorage.removeItem(LOCAL_VERSION_KEY);
+    log('mpd state resetado');
+  }
+
+  function forceSetRemoteTag(tag) {
+    const state = readState();
+    state.latestTag = tag;
+    state.isLatest = semverCompare(getLocalVersion(), tag) >= 0;
+    state.lastChecked = now();
+    writeState(state);
+    log('Forçado remoteTag para', tag);
+  }
+
+  return {
+    startUpdateFlow,
+    setLocalVersion,
+    getLocalVersion,
+    readState,
+    resetState,
+    forceSetRemoteTag,
+    _afterCheckOpenDownloader: null,
+    log,
+  };
+})();
+
+try { window.__MPD_content = MPD; } catch(e){ /* ignore */ }
+
+window.addEventListener('message', async (ev) => {
+  try {
+    if (ev.source !== window) return;
+    const d = ev.data;
+    if (!d || d.source !== 'mpd-page') return;
+    const { id, cmd, args } = d;
+    if (!id || !cmd) {
+      window.postMessage({ source: 'mpd-content', id: id || null, error: 'invalid request' });
+      return;
+    }
+    if (typeof MPD[cmd] !== 'function') {
+      window.postMessage({ source: 'mpd-content', id, error: 'unknown command: ' + cmd });
+      return;
+    }
+    try {
+      const result = await MPD[cmd].apply(MPD, args || []);
+      window.postMessage({ source: 'mpd-content', id, result });
+    } catch (err) {
+      window.postMessage({ source: 'mpd-content', id, error: err && err.message ? err.message : String(err) });
+    }
+  } catch (e) {
+    console.error('[MPD] message handler fatal:', e);
+  }
+}, false);
+
+(function injectPageBridge() {
+  const code = `(${function(){
+    if (window.MPD && window.MPD.__isPageBridge) return;
+    const methods = ['startUpdateFlow','setLocalVersion','getLocalVersion','readState','resetState','forceSetRemoteTag','log'];
+    window.MPD = window.MPD || {};
+    methods.forEach(m => {
+      window.MPD[m] = function(...args) {
+        return new Promise((resolve, reject) => {
+          try {
+            const id = Math.random().toString(36).slice(2);
+            function onRes(ev) {
+              if (ev.source !== window || !ev.data || ev.data.source !== 'mpd-content' || ev.data.id !== id) return;
+              window.removeEventListener('message', onRes);
+              if (ev.data.error) reject(ev.data.error);
+              else resolve(ev.data.result);
+            }
+            window.addEventListener('message', onRes);
+            window.postMessage({ source: 'mpd-page', id, cmd: m, args }, '*');
+          } catch (e) { reject(e?.message || e); }
+        });
+      };
+    });
+    window.MPD.__isPageBridge = true;
+  }} )();`;
+  const s = document.createElement('script');
+  s.textContent = code;
+  (document.documentElement || document.head || document.body).appendChild(s);
+  s.parentNode.removeChild(s);
+})();
+
+window.MPD = {
+  startUpdateFlow: MPD.startUpdateFlow,
+  setLocalVersion: MPD.setLocalVersion,
+  getLocalVersion: MPD.getLocalVersion,
+  readState: MPD.readState,
+  resetState: MPD.resetState,
+  forceSetRemoteTag: MPD.forceSetRemoteTag,
+  log: MPD.log
+};
+
+console.log('[MPD] módulos carregados! Caso seja um desenvolvedor responsável, os comandos estão prontos.');
+
+async function handleSaveClick(openDownloadCallback) {
+  try {
+    console.log('[MPD] botão "Salvar páginas" clicado — iniciando fluxo de checagem');
+    MPD._afterCheckOpenDownloader = openDownloadCallback;
+    await MPD.startUpdateFlow(false);
+  } catch (e) {
+    console.error('[MPD] erro em handleSaveClick:', e);
+    try { openDownloadCallback(); } catch (ee) { console.error('[MPD] falha ao abrir downloader fallback:', ee); }
+  }
+}
+
 const hostname = location.hostname;
 
 if (hostname.includes("comic-fuz.com")) { //https://comic-fuz.com/
@@ -35,11 +381,11 @@ function initComicFuz() { //https://comic-fuz.com/
     <span>Salvar páginas</span>
   `;
 
-    btn.addEventListener('click', openModal);
+    btn.addEventListener('click', () => handleSaveClick(openDownloadModal_comicfuz));
     container.appendChild(btn);
   }
 
-  function openModal() {
+  function openDownloadModal_comicfuz() {
     if (document.getElementById(MODAL_ID)) return;
 
     const modal = document.createElement('div');
@@ -119,31 +465,33 @@ function initComicFuz() { //https://comic-fuz.com/
   }
 
   async function capturePageArea() {
-    const page = document.querySelector(".js-page-area"); // pega o elemento da página
-    if (!page) return console.error("Elemento não encontrado");
+    const page = document.querySelector(".js-page-area");
+    if (!page) {
+      console.error("[MPD] capturePageArea: Elemento não encontrado");
+      return;
+    }
 
-    const rect = page.getBoundingClientRect(); // pega largura, altura, posição
+    const rect = page.getBoundingClientRect();
 
     chrome.runtime.sendMessage({ type: "CAPTURE" }, (res) => {
-      if (res?.error) return console.error("Erro ao capturar:", res.error);
+      if (res?.error) {
+        console.error("[MPD] Erro ao capturar:", res.error);
+        return;
+      }
 
-      // cria imagem do screenshot
       const img = new Image();
       img.onload = () => {
-        // cria canvas temporário com tamanho do elemento
         const canvas = document.createElement("canvas");
         canvas.width = rect.width;
         canvas.height = rect.height;
         const ctx = canvas.getContext("2d");
 
-        // recorta a região do elemento
         ctx.drawImage(
           img,
-          rect.left, rect.top, rect.width, rect.height, // origem
-          0, 0, rect.width, rect.height // destino
+          rect.left, rect.top, rect.width, rect.height,
+          0, 0, rect.width, rect.height
         );
 
-        // salva
         const croppedDataUrl = canvas.toDataURL("image/png");
         const link = document.createElement("a");
         link.href = croppedDataUrl;
@@ -159,6 +507,7 @@ function initComicFuz() { //https://comic-fuz.com/
   function setStatus(msg) {
     const el = document.getElementById('cfz-status');
     if (el) el.innerText = msg;
+    console.log('[MPD][comic-fuz] status:', msg);
   }
 
   async function captureCurrentPages(mimeType) {
@@ -227,6 +576,7 @@ function initComicFuz() { //https://comic-fuz.com/
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    console.log('[MPD][comic-fuz] downloadDirect:', filename);
   }
 
   function ensureButton() {
@@ -276,7 +626,7 @@ function initCycomi() { //https://cycomi.com/
     btn.className = 'comicfuz-save-button';
     btn.textContent = '📷 Salvar páginas';
 
-    btn.onclick = openModal;
+    btn.onclick = () => handleSaveClick(openDownloadModal_cycomi);
 
     btnWrapper.appendChild(btn);
 
@@ -286,7 +636,7 @@ function initCycomi() { //https://cycomi.com/
     container.style.alignItems = 'center';
   }
 
-  function openModal() {
+  function openDownloadModal_cycomi() {
     if (document.getElementById(MODAL_ID)) return;
 
     const modal = document.createElement('div');
@@ -367,6 +717,7 @@ function initCycomi() { //https://cycomi.com/
   function setStatus(msg) {
     const el = document.getElementById('cfz-status');
     if (el) el.innerText = msg;
+    console.log('[MPD][cycomi] status:', msg);
   }
 
   async function captureCurrentCanvases(mimeType) {
@@ -429,6 +780,7 @@ function initCycomi() { //https://cycomi.com/
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    console.log('[MPD][cycomi] downloadDirect:', filename);
   }
 
   function ensureButton() {
@@ -477,12 +829,12 @@ function initTakeComic() { //https://takecomic.jp/
       <span>Salvar páginas</span>
     `;
 
-    btn.addEventListener('click', openModal);
+    btn.addEventListener('click', () => handleSaveClick(openDownloadModal_takecomic));
 
     header.appendChild(btn);
   }
 
-  function openModal() {
+  function openDownloadModal_takecomic() {
     if (document.getElementById(MODAL_ID)) return;
 
     const modal = document.createElement('div');
@@ -564,6 +916,7 @@ function initTakeComic() { //https://takecomic.jp/
   function setStatus(msg) {
     const el = document.getElementById('cfz-status');
     if (el) el.innerText = msg;
+    console.log('[MPD][takecomic] status:', msg);
   }
 
   async function captureCurrentPages(mimeType) {
@@ -649,6 +1002,7 @@ function initTakeComic() { //https://takecomic.jp/
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    console.log('[MPD][takecomic] downloadDirect:', filename);
   }
 
   function ensureButton() {
@@ -697,12 +1051,12 @@ function initMangaMee() { //https://manga-mee.jp/
       <span>Salvar páginas</span>
     `;
 
-    btn.addEventListener('click', openModal);
+    btn.addEventListener('click', () => handleSaveClick(openDownloadModal_mangamee));
 
     titleEl.insertAdjacentElement('afterend', btn);
   }
 
-  function openModal() {
+  function openDownloadModal_mangamee() {
     if (document.getElementById(MODAL_ID)) return;
 
     const modal = document.createElement('div');
@@ -784,6 +1138,7 @@ function initMangaMee() { //https://manga-mee.jp/
   function setStatus(msg) {
     const el = document.getElementById('cfz-status');
     if (el) el.innerText = msg;
+    console.log('[MPD][manga-mee] status:', msg);
   }
 
   async function captureCurrentPagesMangaMee(mimeType) {
@@ -851,6 +1206,7 @@ function initMangaMee() { //https://manga-mee.jp/
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    console.log('[MPD][manga-mee] downloadDirect:', filename);
   }
 
   function ensureButton() {
@@ -896,12 +1252,12 @@ function initChampionCross() { //https://championcross.jp/
     <span>Salvar páginas</span>
   `;
 
-    btn.addEventListener('click', openModal);
+    btn.addEventListener('click', () => handleSaveClick(openDownloadModal_champion));
 
     titleSection.appendChild(btn);
   }
 
-  function openModal() {
+  function openDownloadModal_champion() {
 
     if (document.getElementById(MODAL_ID)) return;
 
@@ -989,6 +1345,7 @@ function initChampionCross() { //https://championcross.jp/
   function setStatus(msg) {
     const el = document.getElementById('cfz-status');
     if (el) el.innerText = msg;
+    console.log('[MPD][championcross] status:', msg);
   }
 
   async function captureCurrentPages(mimeType) {
@@ -1065,6 +1422,7 @@ function initChampionCross() { //https://championcross.jp/
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    console.log('[MPD][championcross] downloadDirect:', filename);
   }
 
   function ensureButton() {
@@ -1109,11 +1467,11 @@ function initFireCross() { //https://firecross.jp/
     btn.style.right = '20px';
     btn.style.zIndex = '999999';
 
-    btn.addEventListener('click', openModal);
+    btn.addEventListener('click', () => handleSaveClick(openDownloadModal_firecross));
     document.body.appendChild(btn);
   }
 
-  function openModal() {
+  function openDownloadModal_firecross() {
 
     if (document.getElementById(MODAL_ID)) return;
 
@@ -1258,19 +1616,21 @@ function initFireCross() { //https://firecross.jp/
     if (right <= left || bottom <= top) return canvas;
 
     const newCanvas = document.createElement('canvas');
-    newCanvas.width = right - left + 1;
-    newCanvas.height = bottom - top + 1;
+    const newW = right - left + 1;
+    const newH = bottom - top + 1;
+    newCanvas.width = newW;
+    newCanvas.height = newH;
 
     newCanvas.getContext('2d').drawImage(
       canvas,
       left,
       top,
-      newCanvas.width,
-      newCanvas.height,
+      newW,
+      newH,
       0,
       0,
-      newCanvas.width,
-      newCanvas.height
+      newW,
+      newH
     );
 
     return newCanvas;
@@ -1278,7 +1638,14 @@ function initFireCross() { //https://firecross.jp/
 
   async function captureCurrentPages(mimeType) {
 
-    const canvas = document.querySelector('#screen_layer canvas');
+    let canvas = document.querySelector('#screen_layer canvas');
+    if (!canvas) {
+      const canvases = Array.from(document.querySelectorAll('#screen_layer canvas'));
+      canvas = canvases.find(c => {
+        const s = c.getAttribute('style') || '';
+        return !/display\s*:\s*none/.test(s);
+      }) || canvases[0];
+    }
     if (!canvas) throw new Error('Os/As Canvas(Imagens) não foram encontrado(s).');
 
     const results = [];
@@ -1293,7 +1660,7 @@ function initFireCross() { //https://firecross.jp/
     for (const p of pages) {
 
       const exportCanvas = document.createElement('canvas');
-      exportCanvas.width = isDouble ? width / 2 : width;
+      exportCanvas.width = isDouble ? Math.floor(width / 2) : width;
       exportCanvas.height = height;
 
       exportCanvas.getContext('2d').drawImage(
@@ -1315,7 +1682,7 @@ function initFireCross() { //https://firecross.jp/
       const dataUrl =
         mimeType === 'image/jpeg' || mimeType === 'image/webp'
           ? cropped.toDataURL(mimeType, 0.92)
-          : cropped.toDataURL(mimeType);
+          : cropped.toDataURL('image/png');
 
       results.push(dataUrl);
     }
@@ -1368,7 +1735,7 @@ function initBookWalker() { //https://bookwalker.jp + https://viewer.bookwalker.
     btn.style.zIndex = '999999';
     btn.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
 
-    btn.addEventListener('click', openModal);
+    btn.addEventListener('click', () => handleSaveClick(openModal));
 
     document.body.appendChild(btn);
   }
@@ -1456,6 +1823,7 @@ function initBookWalker() { //https://bookwalker.jp + https://viewer.bookwalker.
   function setStatus(msg) {
     const el = document.getElementById('cfz-status');
     if (el) el.innerText = msg;
+    console.log('[MPD][bookwalker] status:', msg);
   }
 
   async function captureBookWalker(mimeType) {
@@ -1476,10 +1844,10 @@ function initBookWalker() { //https://bookwalker.jp + https://viewer.bookwalker.
 
       const renderer = document.querySelector('#renderer');
       const center = renderer
-        ? {
-          x: (renderer.getBoundingClientRect().left + renderer.getBoundingClientRect().right) / 2,
-          y: (renderer.getBoundingClientRect().top + renderer.getBoundingClientRect().bottom) / 2
-        }
+        ? (() => {
+            const r = renderer.getBoundingClientRect();
+            return { x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 };
+          })()
         : { x: window.innerWidth / 2, y: window.innerHeight / 2 };
 
       for (const c of canvases) {
@@ -1547,8 +1915,8 @@ function initBookWalker() { //https://bookwalker.jp + https://viewer.bookwalker.
     const leftX = Math.max(0, Math.min(baseX, cw - cropW));
     const rightX = Math.max(0, Math.min(baseX + cropW, cw - cropW));
 
-    const rightDataUrl = canvasCropToDataUrl(canvas, rightX, baseY, cropW, cropH, mimeType);
     const leftDataUrl = canvasCropToDataUrl(canvas, leftX, baseY, cropW, cropH, mimeType);
+    const rightDataUrl = canvasCropToDataUrl(canvas, rightX, baseY, cropW, cropH, mimeType);
 
     results.push(rightDataUrl, leftDataUrl);
     return results;
@@ -1567,6 +1935,7 @@ function initBookWalker() { //https://bookwalker.jp + https://viewer.bookwalker.
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    console.log('[MPD][bookwalker] downloadDirect:', filename);
   }
 
   createFloatingButton();

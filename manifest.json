@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PayWall Downloader",
-  "version": "5.5",
+  "version": "5",
   "description": "Salva imagens de diversos sites com sistema PayWall/Free.",
   "permissions": [
     "downloads",
@@ -11,6 +11,7 @@
     "tabs"
   ],
   "host_permissions": [
+    "https://api.github.com/*",
     "https://comic-fuz.com/*",
     "https://cycomi.com/*",
     "https://takecomic.jp/*",
