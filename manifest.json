@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PayWall Downloader",
-  "version": "5",
+  "version": "1",
   "description": "Salva imagens de diversos sites com sistema PayWall/Free.",
   "permissions": [
     "downloads",
