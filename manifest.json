@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PayWall Downloader",
-  "version": "1",
+  "version": "1.5",
   "description": "Salva imagens de diversos sites com sistema PayWall/Free.",
   "permissions": [
     "downloads",
@@ -19,7 +19,9 @@
     "https://championcross.jp/*",
     "https://firecross.jp/*",
     "https://ynjn.jp/*",
-    "https://viewer.bookwalker.jp/*"
+    "https://viewer.bookwalker.jp/*",
+    "https://manga-one.com/*",
+    "https://ynjn.jp/*"
   ],
   "content_scripts": [
     {
@@ -31,7 +33,9 @@
         "https://championcross.jp/*",
         "https://firecross.jp/*",
         "https://ynjn.jp/*",
-        "https://viewer.bookwalker.jp/*"
+        "https://viewer.bookwalker.jp/*",
+        "https://manga-one.com/*",
+        "https://ynjn.jp/*"
       ],
       "js": [
         "content.js"
