@@ -91,6 +91,27 @@ const MPD = (() => {
     } catch (err) { logError('fetchLatestRelease error:', err); throw err; }
   }
 
+  async function fetchReleaseByTag(tag) {
+    if (!tag) return null;
+    const url = `https://api.github.com/repos/ButterScans/Manga-PayWall-Downloader/releases/tags/${encodeURIComponent(tag)}`;
+    log('fetchReleaseByTag() — buscando release por tag', tag);
+    try {
+      const res = await fetch(url, { headers: { 'Accept': 'application/vnd.github.v3+json' }, cache: 'no-store' });
+      if (!res.ok) {
+        const text = await res.text().catch(() => null);
+        throw new Error(`HTTP ${res.status} ${res.statusText} ${text ? '| ' + text.slice(0, 200) : ''}`);
+      }
+      const et = res.headers.get('etag') || null;
+      const json = await res.json();
+      log('fetchReleaseByTag() — received', json.tag_name || json.name || '(sem tag)', 'etag:', et);
+      if (et) json._mpd_etag = et;
+      return { data: json, etag: et };
+    } catch (err) {
+      logError('fetchReleaseByTag error:', err);
+      return null;
+    }
+  }
+
   function createCheckerModal() {
     let existing = document.getElementById('mpd-update-checker-modal');
     if (existing) return existing;
@@ -270,21 +291,27 @@ const MPD = (() => {
 
   async function startUpdateFlow(force = false) {
     log('startUpdateFlow called. force:', force);
-    const modal = createCheckerModal();
-    setStatusUI('verificando atualizações');
 
     const state = readState();
     const localVer = getLocalVersion();
 
+    if (force) {
+      createCheckerModal();
+      setStatusUI('verificando atualizações');
+    } else {
+      log('checagem silenciosa (sem modal) — abrirei GUI só se houver update/erro.');
+    }
+
     if (!force && state.lastChecked && (now() - state.lastChecked) < DEFAULT_SKIP_SECONDS * 1000) {
-      if (state.latestTag && semverCompare(localVer, state.latestTag) >= 0) {
-        log('estado indica up-to-date e última checagem recente. pulando fetch e abrindo downloader.');
-        setStatusUI('versão local é a mais recente (checada anteriormente). iniciando downloader...');
+      if (state.etag) {
+        log('última checagem recente, existe etag — farei fetch condicional (If-None-Match) para garantir novo release.');
+      } else if (state.latestTag && semverCompare(localVer, state.latestTag) >= 0) {
+        log('estado indica up-to-date e última checagem recente sem etag. Abrindo downloader automaticamente (sem modal).');
         setStateAfterCheck({ tag_name: state.latestTag, _mpd_etag: state.etag }, true);
         showNoUpdateThenOpenDownloader();
         return;
       } else {
-        log('última checagem recente, mas versão local menor que remote. realizando fetch para confirmar.');
+        log('última checagem recente, mas versão local menor que remote (ou remote unknown). realizando fetch para confirmar.');
       }
     }
 
@@ -303,9 +330,19 @@ const MPD = (() => {
           showNoUpdateThenOpenDownloader();
           return;
         } else {
-          setStatusUI(`Nova versão disponível: ${remoteTag}`);
-          setStateAfterCheck({ tag_name: remoteTag, _mpd_etag: state.etag }, false);
-          showAvailableModal({ tag_name: remoteTag, name: remoteTag, body: '' });
+          setStatusUI('Detectada possível nova versão — obtendo detalhes do release...');
+          const fetched = await fetchReleaseByTag(remoteTag);
+          if (fetched && fetched.data) {
+            setStateAfterCheck(fetched.data, false);
+            if (!force) createCheckerModal();
+            setStatusUI(`Nova versão disponível: ${fetched.data.tag_name || fetched.data.name}`);
+            showAvailableModal(fetched.data);
+          } else {
+            if (!force) createCheckerModal();
+            setStatusUI(`Nova versão disponível: ${remoteTag}`);
+            setStateAfterCheck({ tag_name: remoteTag, _mpd_etag: state.etag }, false);
+            showAvailableModal({ tag_name: remoteTag, name: remoteTag, body: state.latestBody || '' });
+          }
           return;
         }
       }
@@ -315,6 +352,7 @@ const MPD = (() => {
 
       const remoteTag = release.tag_name || release.name || null;
       if (!remoteTag) {
+        if (!force) createCheckerModal();
         setStatusUI('erro: release sem tag_name. abrindo downloader por segurança.');
         logError('release sem tag_name recebido:', release);
         setStateAfterCheck(release, true);
@@ -327,17 +365,19 @@ const MPD = (() => {
         'remote:', remoteTag, '(', normalizeVer(remoteTag), ')', 'cmp:', cmp);
 
       if (cmp >= 0) {
-        setStatusUI(`Você está usando a versão mais recente (${localVer}). Iniciando o GUI de download...`);
+        log('local >= remoto. Abrindo downloader automaticamente (sem modal).');
         setStateAfterCheck(release, true);
         showNoUpdateThenOpenDownloader();
         return;
       } else {
+        if (!force) createCheckerModal();
         setStatusUI(`Nova versão disponível: ${remoteTag}`);
         setStateAfterCheck(release, false);
         showAvailableModal(release);
         return;
       }
     } catch (err) {
+      if (!force) createCheckerModal();
       setStatusUI('Erro ao verificar se há atualizações: ' + (err?.message || err));
       logError('Erro no fluxo de verificação:', err);
       setTimeout(() => {
